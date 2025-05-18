@@ -46,6 +46,32 @@ bool IsSessionReallyPlaying(IAudioSessionControl2* pSession2) {
     return false;
 }
 
+void FadeToVolume(ISimpleAudioVolume* pVolume, float targetVolume, float step = 0.05f, int delayMs = 50) {
+    if (!pVolume) return;  // NULL kontrolü
+    
+    float currentVolume;
+    if (FAILED(pVolume->GetMasterVolume(&currentVolume))) return;
+
+    // Fade down
+    if (currentVolume > targetVolume) {
+        while (currentVolume - targetVolume > step) {
+            currentVolume -= step;
+            pVolume->SetMasterVolume(currentVolume, NULL);
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+        }
+    }
+    // Fade up
+    else if (currentVolume < targetVolume) {
+        while (targetVolume - currentVolume > step) {
+            currentVolume += step;
+            pVolume->SetMasterVolume(currentVolume, NULL);
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+        }
+    }
+
+    pVolume->SetMasterVolume(targetVolume, NULL);
+}
+
 void CheckAndControlSpotifyVolume() {
     IMMDeviceEnumerator* pEnumerator = nullptr;
     IMMDevice* pDevice = nullptr;
@@ -131,7 +157,7 @@ void CheckAndControlSpotifyVolume() {
 
             if (pVolume) {
                 float volumeLevel = isOtherAppPlaying ? 0.2f : 1.0f;
-                pVolume->SetMasterVolume(volumeLevel, NULL);
+                FadeToVolume(pVolume, volumeLevel);
                 pVolume->Release();
             }
         }
