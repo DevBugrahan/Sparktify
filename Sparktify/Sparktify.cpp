@@ -4,7 +4,6 @@
 #include <mmdeviceapi.h>
 #include <endpointvolume.h>
 #include <audiopolicy.h>
-#include <AudioPolicy.h>
 #include <psapi.h>
 #include <tchar.h>
 #include <iostream>
@@ -15,38 +14,36 @@
 #include "resource.h"
 #include <fstream>
 #include <string>
-#include <shlobj.h> // SHGetFolderPathW için
+#include <shlobj.h>
 #include <filesystem>
+#include <sstream>
 
 #define WM_TRAYICON (WM_USER + 1)
 #define ID_TRAY_EXIT 1001
 #define ID_TRAY_AUTOSTART 1002
 
-// Ayar dosyasý yolu
 const wchar_t* SETTINGS_FILE = L"settings.ini";
 const wchar_t* AUTOSTART_KEY = L"AutoStart";
+const wchar_t* VOLUME_KEY = L"VolumeLevel";
 
-// Uygulamanýn tam yolu
 std::wstring GetAppPath() {
     wchar_t path[MAX_PATH];
     GetModuleFileNameW(NULL, path, MAX_PATH);
     return path;
 }
 
-// Belgeler\Sparktify\settings.ini yolunu döndürür
 std::wstring GetSettingsFilePath() {
     wchar_t docPath[MAX_PATH];
     SHGetFolderPathW(NULL, CSIDL_PERSONAL, NULL, SHGFP_TYPE_CURRENT, docPath);
     std::wstring folder = std::wstring(docPath) + L"\\Sparktify";
-    std::filesystem::create_directories(folder); // Klasörü oluþtur (varsa bir þey yapmaz)
+    std::filesystem::create_directories(folder);
     return folder + L"\\settings.ini";
 }
 
-// Ayar dosyasýndan autostart durumunu oku
 bool ReadAutoStartSetting() {
     std::wstring settingsPath = GetSettingsFilePath();
     std::wifstream fin(settingsPath);
-    if (!fin) return true; // Dosya yoksa default açýk
+    if (!fin) return true;
     std::wstring line;
     while (std::getline(fin, line)) {
         if (line.find(AUTOSTART_KEY) == 0) {
@@ -56,14 +53,12 @@ bool ReadAutoStartSetting() {
     return true;
 }
 
-// Ayar dosyasýna autostart durumunu yaz
 void WriteAutoStartSetting(bool enabled) {
     std::wstring settingsPath = GetSettingsFilePath();
     std::wofstream fout(settingsPath);
     fout << AUTOSTART_KEY << L"=" << (enabled ? L"1" : L"0") << std::endl;
 }
 
-// Kayýt defterine ekle/kaldýr
 void SetAutoStartRegistry(bool enabled) {
     HKEY hKey;
     RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey);
@@ -76,10 +71,53 @@ void SetAutoStartRegistry(bool enabled) {
     RegCloseKey(hKey);
 }
 
+float ReadVolumeLevel() {
+    std::wstring settingsPath = GetSettingsFilePath();
+    std::wifstream fin(settingsPath);
+    if (!fin) return 0.2f; // Varsayýlan: %20
+    std::wstring line;
+    while (std::getline(fin, line)) {
+        if (line.find(VOLUME_KEY) == 0) {
+            size_t pos = line.find(L"=");
+            if (pos != std::wstring::npos) {
+                try {
+                    return std::stof(line.substr(pos + 1));
+                }
+                catch (...) {}
+            }
+        }
+    }
+    return 0.2f;
+}
+
+void WriteVolumeLevel(float value) {
+    // Diðer ayarlarý korumak için dosyayý oku, güncelle, tekrar yaz
+    std::wstring settingsPath = GetSettingsFilePath();
+    std::wifstream fin(settingsPath);
+    std::wstringstream buffer;
+    bool found = false;
+    if (fin) {
+        std::wstring line;
+        while (std::getline(fin, line)) {
+            if (line.find(VOLUME_KEY) == 0) {
+                buffer << VOLUME_KEY << L"=" << value << std::endl;
+                found = true;
+            }
+            else {
+                buffer << line << std::endl;
+            }
+        }
+    }
+    if (!found) {
+        buffer << VOLUME_KEY << L"=" << value << std::endl;
+    }
+    std::wofstream fout(settingsPath);
+    fout << buffer.str();
+}
+
 bool IsSessionReallyPlaying(IAudioSessionControl2* pSession2) {
     IAudioMeterInformation* pMeter = nullptr;
 
-    // Oturuma baðlý ses cihazýný alýn
     ISimpleAudioVolume* pVolume = nullptr;
     IAudioSessionControl* pControl = nullptr;
     pSession2->QueryInterface(__uuidof(IAudioSessionControl), (void**)&pControl);
@@ -98,12 +136,11 @@ bool IsSessionReallyPlaying(IAudioSessionControl2* pSession2) {
     IAudioSessionEnumerator* pEnumSess = nullptr;
     pMgr->GetSessionEnumerator(&pEnumSess);
 
-    // Oturumun ses seviyesi ölçümcüsünü al
     if (SUCCEEDED(pSession2->QueryInterface(__uuidof(IAudioMeterInformation), (void**)&pMeter))) {
         float peak = 0.0f;
         if (SUCCEEDED(pMeter->GetPeakValue(&peak))) {
             pMeter->Release();
-            if (peak > 0.05f) return true;  // 0.01 hassasiyet: 1% üzeri ses varsa aktif
+            if (peak > 0.05f) return true;
         }
     }
 
@@ -141,7 +178,6 @@ void CheckAndControlSpotifyVolume() {
     UINT deviceCount = 0;
     pDeviceCollection->GetCount(&deviceCount);
 
-    // 1. Tüm cihazlarda Spotify dýþý bir uygulama ses çýkarýyor mu?
     bool isOtherAppPlaying = false;
     for (UINT devIdx = 0; devIdx < deviceCount; ++devIdx) {
         IMMDevice* pDevice = nullptr;
@@ -188,17 +224,16 @@ void CheckAndControlSpotifyVolume() {
             pSession2->Release();
             pSession->Release();
 
-            if (isOtherAppPlaying) break; // Bir tane bulunca yeter
+            if (isOtherAppPlaying) break;
         }
 
         pSessionEnumerator->Release();
         pSessionManager->Release();
         pDevice->Release();
 
-        if (isOtherAppPlaying) break; // Bir tane bulunca yeter
+        if (isOtherAppPlaying) break;
     }
 
-    // 2. Tüm cihazlarda Spotify'ýn sesini ayarla
     for (UINT devIdx = 0; devIdx < deviceCount; ++devIdx) {
         IMMDevice* pDevice = nullptr;
         hr = pDeviceCollection->Item(devIdx, &pDevice);
@@ -239,7 +274,7 @@ void CheckAndControlSpotifyVolume() {
                 pSession->QueryInterface(__uuidof(ISimpleAudioVolume), (void**)&pVolume);
 
                 if (pVolume) {
-                    float volumeLevel = isOtherAppPlaying ? 0.2f : 1.0f;
+                    float volumeLevel = isOtherAppPlaying ? ReadVolumeLevel() : 1.0f;
                     FadeToVolume(pVolume, volumeLevel);
                     pVolume->Release();
                 }
@@ -259,7 +294,6 @@ void CheckAndControlSpotifyVolume() {
     pEnumerator->Release();
 }
 
-// Sað týk menüsüne ekle
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     static bool autostart = ReadAutoStartSetting();
 
@@ -296,15 +330,12 @@ void RunVolumeControl() {
     CoUninitialize();
 }
 
-// wWinMain içinde ilk baþlatmada autostart ayarýný uygula
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
-    // Ayar dosyasýný ilk çalýþtýrmada oluþtur
     std::wstring settingsPath = GetSettingsFilePath();
     if (!std::filesystem::exists(settingsPath)) {
-        WriteAutoStartSetting(true); // Default açýk olarak oluþtur
+        WriteAutoStartSetting(true);
     }
 
-    // Pencere sýnýfý tanýmý
     const wchar_t CLASS_NAME[] = L"SparktifyTrayClass";
     WNDCLASS wc = {};
     wc.lpfnWndProc = WindowProc;
@@ -312,11 +343,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     wc.lpszClassName = CLASS_NAME;
     RegisterClass(&wc);
 
-    // Gizli pencere oluþtur
     HWND hwnd = CreateWindowEx(0, CLASS_NAME, L"Sparktify", 0, 0, 0, 0, 0, NULL, NULL, hInstance, NULL);
     if (!hwnd) return 0;
 
-    // System tray simgesi ekle
     NOTIFYICONDATA nid = {};
     nid.cbSize = sizeof(nid);
     nid.hWnd = hwnd;
@@ -327,22 +356,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     wcscpy_s(nid.szTip, L"Sparktify");
     Shell_NotifyIcon(NIM_ADD, &nid);
 
-    // Autostart ayarýný uygula (ilk baþlatmada)
     bool autostart = ReadAutoStartSetting();
     SetAutoStartRegistry(autostart);
 
-    // Ana iþlevi thread olarak baþlat
     std::thread worker(RunVolumeControl);
     worker.detach();
 
-    // Mesaj döngüsü
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
 
-    // Tray simgesini kaldýr
     Shell_NotifyIcon(NIM_DELETE, &nid);
     return 0;
 }
