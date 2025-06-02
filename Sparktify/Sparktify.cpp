@@ -17,6 +17,8 @@
 #include <shlobj.h>
 #include <filesystem>
 #include <sstream>
+#include "SpotifyApi.h"
+#include "SpotifyPopup.h"
 
 #define WM_TRAYICON (WM_USER + 1)
 #define ID_TRAY_EXIT 1001
@@ -330,6 +332,19 @@ void RunVolumeControl() {
     CoUninitialize();
 }
 
+void RunSpotifyPopup(const std::string& accessToken) {
+    std::wstring lastSong, lastArtist;
+    while (true) {
+        auto info = GetCurrentSpotifyTrack(accessToken);
+        if (!info.song.empty() && (info.song != lastSong || info.artist != lastArtist)) {
+            lastSong = info.song;
+            lastArtist = info.artist;
+            ShowSpotifyPopup(info.song, info.artist);
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+    }
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     std::wstring settingsPath = GetSettingsFilePath();
     if (!std::filesystem::exists(settingsPath)) {
@@ -361,6 +376,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
 
     std::thread worker(RunVolumeControl);
     worker.detach();
+
+    std::thread popupThread(RunSpotifyPopup, "SPOTIFY_ACCESS_TOKEN");
+    popupThread.detach();
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
