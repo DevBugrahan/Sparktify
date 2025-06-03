@@ -27,6 +27,7 @@
 const wchar_t* SETTINGS_FILE = L"settings.ini";
 const wchar_t* AUTOSTART_KEY = L"AutoStart";
 const wchar_t* VOLUME_KEY = L"VolumeLevel";
+const wchar_t* SPOTIFY_TOKEN_KEY = L"SpotifyToken";
 
 std::wstring GetAppPath() {
     wchar_t path[MAX_PATH];
@@ -57,8 +58,26 @@ bool ReadAutoStartSetting() {
 
 void WriteAutoStartSetting(bool enabled) {
     std::wstring settingsPath = GetSettingsFilePath();
+    std::wifstream fin(settingsPath);
+    std::wstringstream buffer;
+    bool found = false;
+    if (fin) {
+        std::wstring line;
+        while (std::getline(fin, line)) {
+            if (line.find(AUTOSTART_KEY) == 0) {
+                buffer << AUTOSTART_KEY << L"=" << (enabled ? L"1" : L"0") << std::endl;
+                found = true;
+            }
+            else {
+                buffer << line << std::endl;
+            }
+        }
+    }
+    if (!found) {
+        buffer << AUTOSTART_KEY << L"=" << (enabled ? L"1" : L"0") << std::endl;
+    }
     std::wofstream fout(settingsPath);
-    fout << AUTOSTART_KEY << L"=" << (enabled ? L"1" : L"0") << std::endl;
+    fout << buffer.str();
 }
 
 void SetAutoStartRegistry(bool enabled) {
@@ -115,6 +134,51 @@ void WriteVolumeLevel(float value) {
     }
     std::wofstream fout(settingsPath);
     fout << buffer.str();
+}
+
+void EnsureSpotifyTokenKeyExists() {
+    std::wstring settingsPath = GetSettingsFilePath();
+    std::wifstream fin(settingsPath);
+    std::wstringstream buffer;
+    bool found = false;
+    if (fin) {
+        std::wstring line;
+        while (std::getline(fin, line)) {
+            if (line.find(SPOTIFY_TOKEN_KEY) == 0) {
+                found = true;
+            }
+            buffer << line << std::endl;
+        }
+    }
+    fin.close();
+    if (!found) {
+        buffer << SPOTIFY_TOKEN_KEY << L"=" << std::endl;
+        std::wofstream fout(settingsPath, std::ios::app);
+        fout << SPOTIFY_TOKEN_KEY << L"=" << std::endl;
+        fout.close();
+    }
+}
+
+void EnsureVolumeKeyExists() {
+    std::wstring settingsPath = GetSettingsFilePath();
+    std::wifstream fin(settingsPath);
+    std::wstringstream buffer;
+    bool found = false;
+    if (fin) {
+        std::wstring line;
+        while (std::getline(fin, line)) {
+            if (line.find(VOLUME_KEY) == 0) {
+                found = true;
+            }
+            buffer << line << std::endl;
+        }
+    }
+    fin.close();
+    if (!found) {
+        std::wofstream fout(settingsPath, std::ios::app);
+        fout << VOLUME_KEY << L"=0.2" << std::endl;
+        fout.close();
+    }
 }
 
 bool IsSessionReallyPlaying(IAudioSessionControl2* pSession2) {
@@ -348,7 +412,14 @@ void RunSpotifyPopup(const std::string& accessToken) {
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     std::wstring settingsPath = GetSettingsFilePath();
     if (!std::filesystem::exists(settingsPath)) {
-        WriteAutoStartSetting(true);
+        std::wofstream fout(settingsPath);
+        fout << AUTOSTART_KEY << L"=1" << std::endl;
+        fout << VOLUME_KEY << L"=0.2" << std::endl;
+        fout << SPOTIFY_TOKEN_KEY << L"=" << std::endl;
+        fout.close();
+    } else {
+        EnsureSpotifyTokenKeyExists();
+        EnsureVolumeKeyExists();
     }
 
     const wchar_t CLASS_NAME[] = L"SparktifyTrayClass";
